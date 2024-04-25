@@ -4,3 +4,4 @@ pandas
 scikit_learn
 seaborn
 IPython
+jupyter
