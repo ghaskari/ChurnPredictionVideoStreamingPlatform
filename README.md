@@ -10,7 +10,6 @@ This project predicts customer churn for a video streaming platform. Churn predi
 - [Project Structure](#project-structure)
 - [Usage Guide](#usage-guide)
 - [Customization and Extension](#customization-and-extension)
-- [Contributors](#contributors)
 
 ---
 
