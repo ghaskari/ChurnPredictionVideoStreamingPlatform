@@ -195,8 +195,18 @@ def get_rf_param_grid():
 def get_best_random_forest(x_train, y_train, param_grid):
     """Perform GridSearchCV to get the best Random Forest model."""
     rf_model = RandomForestClassifier()
-    grid_search = GridSearchCV(rf_model, param_grid, cv=DEFAULT_CV, verbose=2, n_jobs=-1)
-    grid_search.fit(x_train, y_train)
+    grid_search = GridSearchCV(rf_model,
+                               param_grid,
+                               cv=DEFAULT_CV,
+                               verbose=2,
+                               n_jobs=-1,
+                               error_score='raise'
+                               )
+
+    try:
+        grid_search.fit(x_train, y_train)
+    except Exception as e:
+        print(f"GridSearchCV error: {e}")
 
     return grid_search.best_params_, grid_search.best_estimator_
 
