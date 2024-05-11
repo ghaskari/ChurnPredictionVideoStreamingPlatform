@@ -4,23 +4,25 @@ import numpy as np
 import pandas as pd
 import scipy.stats as ss
 import seaborn as sns
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingRegressor
-from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     accuracy_score,
     precision_score,
     recall_score,
     f1_score,
-    confusion_matrix,
-    r2_score,
+    confusion_matrix
 )
+from sklearn.metrics import roc_auc_score
+from sklearn.inspection import permutation_importance
 from sklearn.model_selection import GridSearchCV, cross_val_score
-from sklearn.svm import SVR
+from sklearn.svm import SVC
 from matplotlib import pyplot as plt
 
 # Constants
 DEFAULT_CV = 5  # Default cross-validation folds
-DEFAULT_SCORING = 'neg_mean_squared_error'  # Default scoring metric
+DEFAULT_SCORING = 'f1'  # Default scoring metric
 
 
 # Utility Functions
@@ -150,7 +152,7 @@ def calculate_churn_rate_by_bins(df, numeric_column, num_bins=10, target_column=
     df_clean = df.dropna(subset=[numeric_column])
     bins = pd.cut(df_clean[numeric_column], bins=num_bins, include_lowest=True)
 
-    churn_rates = df_clean.groupby(bins, observed=False)[target_column].mean().reset_index(observed=False)
+    churn_rates = df_clean.groupby(bins, observed=False)[target_column].mean().reset_index()
     churn_rates.rename(columns={target_column: 'Churn Rate'}, inplace=True)
 
     return churn_rates
@@ -181,84 +183,110 @@ def extract_target(df, target_column):
 
 
 # Model Training and Evaluation Functions
-def get_rf_param_grid():
-    """Define a parameter grid for Random Forest."""
+def evaluate_classification_performance(model, x_train, y_train, y_test, y_pred, cv=DEFAULT_CV):
+    """Evaluate the performance of a classifier model using accuracy and F1-score."""
+    # Basic metrics
+    accuracy = accuracy_score(y_test, y_pred)
+    precision = precision_score(y_test, y_pred, average='binary', zero_division=1)
+    recall = recall_score(y_test, y_pred, average='binary')
+    f1 = f1_score(y_test, y_pred, average='binary')
+
+    # Cross-validation accuracy for model stability
+    cv_accuracy = cross_val_score(model, x_train, y_train, cv=cv, scoring=DEFAULT_SCORING).mean()
+
+    # Display metrics
+    print("Accuracy:", accuracy)
+    print("Precision:", precision)
+    print("Recall:", recall)
+    print("F1 Score:", f1)
+    print("Cross-Validation Accuracy:", cv_accuracy)
+    print("Confusion Matrix:\n", confusion_matrix(y_test, y_pred))
+    print("AUC-ROC:", roc_auc_score(y_test, y_pred))
+
     return {
-        'n_estimators': [100, 200, 300],
-        'max_depth': [None, 10, 20, 30],
-        'min_samples_split': [2, 5, 10],
-        'min_samples_leaf': [1, 2, 4],
-        'n_jobs': [-1],
+        "accuracy": accuracy,
+        "f1_score": f1,
+        "cross_val_accuracy": cv_accuracy,
     }
 
 
-def get_best_random_forest(x_train, y_train, param_grid):
-    """Perform GridSearchCV to get the best Random Forest model."""
-    rf_model = RandomForestClassifier()
-    grid_search = GridSearchCV(rf_model,
-                               param_grid,
-                               cv=DEFAULT_CV,
-                               verbose=2,
-                               n_jobs=-1,
-                               error_score='raise'
-                               )
+def get_best_model_and_params(x_train, y_train):
+    """Find the best model among comparison models using GridSearchCV."""
+    models = {
+        'Random Forest': (RandomForestClassifier(), {
+            'n_estimators': [100, 200, 300],
+            'max_depth': [None, 10, 20, 30],
+            'min_samples_split': [2, 5, 10],
+            'min_samples_leaf': [1, 2, 4],
+            # 'n_jobs': [-1],
+        }),
+        'Gradient Boosting Classifier': (GradientBoostingClassifier(), {
+            'n_estimators': [100, 200, 300],
+            'learning_rate': [0.05, 0.1, 0.2],
+            'max_depth': [3, 4, 5],
+            'min_samples_split': [2, 5, 10],
+            'min_samples_leaf': [1, 2, 4],
+        }),
+        'Support Vector Classifier': (SVC(), {
+            'C': [0.1, 1, 10],
+            'kernel': ['linear', 'poly', 'rbf', 'sigmoid'],
+            'gamma': ['scale', 'auto'],
+        }),
+        'Logistic Regression': (LogisticRegression(), {
+            'C': [0.1, 1, 10],
+            'penalty': ['l1', 'l2'],
+            'solver': ['liblinear'],
+        }),
+        'K-Nearest Neighbors': (KNeighborsClassifier(), {
+            'n_neighbors': [3, 5, 7],
+            'weights': ['uniform', 'distance'],
+            'algorithm': ['auto', 'ball_tree', 'kd_tree', 'brute'],
+        })
+    }
 
-    try:
+    best_model = None
+    best_params = None
+    best_score = -1
+    best_evaluation_results = {}
+
+    for name, (model, param_grid) in models.items():
+        grid_search = GridSearchCV(model, param_grid, cv=5, verbose=1, n_jobs=-1)
         grid_search.fit(x_train, y_train)
-    except Exception as e:
-        print(f"GridSearchCV error: {e}")
 
-    return grid_search.best_params_, grid_search.best_estimator_
+        # Evaluate the model
+        evaluation_results = evaluate_classification_performance(grid_search.best_estimator_, x_train, y_train, x_test, y_test)
 
+        if evaluation_results['f1_score'] > best_score:
+            best_score = evaluation_results['f1_score']
+            best_model = grid_search.best_estimator_
+            best_params = grid_search.best_params_
+            best_evaluation_results = evaluation_results
 
-def get_comparison_models(best_rf_model):
-    """Define models for comparison, including the best Random Forest."""
-    return {
-        'Linear Regression': LinearRegression(),
-        'Gradient Boosting': GradientBoostingRegressor(),
-        'Support Vector Machine': SVR(),
-        'Random Forest': best_rf_model,
-    }
-
-
-def find_best_model(models, x_train, y_train, x_test, y_test):
-    """Find the best model among the comparison models based on performance."""
-    best_model_name = None
-    best_score = float('inf')
-
-    for name, model in models.items():
-        model.fit(x_train, y_train)
-        y_pred = model.predict(x_test)
-
-        score = evaluate_regression_performance(model, x_train, y_train, y_test, y_pred)
-
-        print(f"{name}: Performance = {score}")
-
-        if score < best_score:
-            best_score = score
-            best_model_name = name
-
-    return models[best_model_name], best_model_name
-
-
-def evaluate_regression_performance(model, x_train, y_train, y_test, y_pred, cv=DEFAULT_CV, scoring=DEFAULT_SCORING):
-    """Evaluate the performance of a regression model."""
-    r2 = r2_score(y_test, y_pred)
-    cv_scores = cross_val_score(model, x_train, y_train, cv=cv, scoring=scoring)
-
-    print("R-squared:", r2)
-    print(f"Mean Squared Error (CV) = {cv_scores.mean()}")
-
-    return cv_scores.mean()
+    return best_model, best_params, best_evaluation_results
 
 
 def plot_feature_importance(model, feature_names, model_name, figsize=(15, 10), font_scale=1.5, fontsize=10):
     """Plot the feature importance for a given model."""
-    # Create a DataFrame with feature importance
-    feature_importances_df = pd.DataFrame({
-        'Feature': feature_names,
-        'Importance': model.feature_importances_,
-    })
+    # Check the type of model
+    if isinstance(model, RandomForestClassifier) or isinstance(model, GradientBoostingClassifier):
+        # For RandomForestClassifier or GradientBoostingClassifier
+        feature_importances_df = pd.DataFrame({
+            'Feature': feature_names,
+            'Importance': model.feature_importances_,
+        })
+    elif isinstance(model, KNeighborsClassifier):
+        # For KNeighborsClassifier
+        # Compute permutation importance
+        result = permutation_importance(model, x_test, y_test, n_repeats=10, random_state=42)
+        feature_importances = result.importances_mean
+        feature_importances_df = pd.DataFrame({
+            'Feature': feature_names,
+            'Importance': feature_importances,
+        })
+    else:
+        # For other models (assuming they don't have a direct feature importance attribute)
+        print("Warning: Feature importance not available for this model.")
+        return
 
     # Increase font size for all elements in the plot
     sns.set(font_scale=font_scale)
@@ -279,22 +307,19 @@ def plot_feature_importance(model, feature_names, model_name, figsize=(15, 10), 
     plt.show()
 
 
+
 df_prediction_submission = pd.read_csv('Files/prediction_submission.csv')
 
 data_descriptions = pd.read_csv('Files/data_descriptions.csv')
 pd.set_option('display.max_colwidth', None)
-data_descriptions
 
 train_df = pd.read_csv("Files/train.csv")
 print('train_df Shape:', train_df.shape)
-train_df.head()
 
 test_df = pd.read_csv("Files/test.csv")
 print('test_df Shape:', test_df.shape)
-test_df.head()
- 
-## EDA
 
+## EDA
 print_dataframe_stats(train_df)
 
 print_dataframe_stats(test_df)
@@ -302,7 +327,6 @@ print_dataframe_stats(test_df)
 train_df.describe()
  
 ## Visualize Features
-
 create_bar_plot(train_df, 'AccountAge', 'Account Age')
 
 create_bar_plot(train_df, 'MonthlyCharges', 'Monthly Charges', 2)
@@ -328,11 +352,10 @@ plot_categorical_churn_counts(train_df, categorical_columns)
 plot_heatmap(train_df)
  
 ## Calculate Correlation
-
 correlation_scores = categorical_correlation(train_df, categorical_columns)
 print(correlation_scores)
-## Calculate Churn Rate
 
+## Calculate Churn Rate
 for categorical_column in categorical_columns:
     churn_rates = calculate_churn_rate(train_df, categorical_column)
     print(churn_rates)
@@ -349,13 +372,10 @@ except Exception as ex:
  
 ## Encode DataFrames
 df_encoded_train = apply_one_hot_encoding(train_df, categorical_columns)
-df_encoded_train
 
 df_encoded_test = apply_one_hot_encoding(test_df, categorical_columns)
-df_encoded_test
- 
-## Split Train - Test
 
+## Split Train - Test
 # Define the columns to exclude for feature extraction
 columns_to_exclude_train = ['Churn', 'CustomerID']
 columns_to_exclude_test = ['CustomerID']
@@ -371,16 +391,8 @@ x_test = extract_features(df_encoded_test, columns_to_exclude_test)
 y_test = extract_features(df_prediction_submission, columns_to_exclude_test)
  
 ## Evaluate Models
-
-# Define the parameter grid and get the best Random Forest model
-param_grid = get_rf_param_grid()
-best_params, best_rf_model = get_best_random_forest(x_train, y_train, param_grid)
-
-# Get the comparison models, including the best Random Forest
-comparison_models = get_comparison_models(best_rf_model)
-
 # Find the best model among the comparison models
-best_model, best_model_name = find_best_model(comparison_models, x_train, y_train, x_test, y_test)
+best_model, best_model_name = get_best_model_and_params(x_train, y_train)
 
 # Display information about the best model
 print(f"The best model is: {best_model_name} with the best performance.")
