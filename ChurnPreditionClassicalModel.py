@@ -1,5 +1,3 @@
-
-# Import Libraries
 import numpy as np
 import pandas as pd
 import scipy.stats as ss
@@ -12,9 +10,9 @@ from sklearn.metrics import (
     precision_score,
     recall_score,
     f1_score,
-    confusion_matrix
+    confusion_matrix,
+    roc_auc_score
 )
-from sklearn.metrics import roc_auc_score
 from sklearn.inspection import permutation_importance
 from sklearn.model_selection import GridSearchCV, cross_val_score
 from sklearn.svm import SVC
@@ -179,23 +177,35 @@ class DataProcessingFunctions:
 class ModelTrainingEvaluationFunctions:
     # Constants
     def __init__(self):
-        self.DEFAULT_CV = 5  # Default cross-validation folds
-        self.DEFAULT_SCORING = 'f1'  # Default scoring metric
+        self.DEFAULT_CV = 5
+        self.DEFAULT_SCORING = 'f1'
 
-    def evaluate_classification_performance(self, model, x_train, y_train, y_test, y_pred, cv=None):
+    def evaluate_classification_performance(self, model, x_test, y_test_df, cv=None):
         """Evaluate the performance of a classifier model using accuracy and F1-score."""
-
         if cv is None:
             cv = self.DEFAULT_CV
 
+        # Convert y_test_df to Series
+        y_test = y_test_df.squeeze()
+
+        # Ensure y_test is binary
+        if y_test.dtype != np.bool_ and y_test.dtype != 'int64':
+            threshold = 0.5  # Example threshold, adjust as needed
+            y_test_binary = (y_test >= threshold).astype(int)
+        else:
+            y_test_binary = y_test
+
+        # Predict
+        y_pred = model.predict(x_test)
+
         # Basic metrics
-        accuracy = accuracy_score(y_test, y_pred)
-        precision = precision_score(y_test, y_pred, average='binary', zero_division=1)
-        recall = recall_score(y_test, y_pred, average='binary')
-        f1 = f1_score(y_test, y_pred, average='binary')
+        accuracy = accuracy_score(y_test_binary, y_pred)
+        precision = precision_score(y_test_binary, y_pred, average='binary', zero_division=1)
+        recall = recall_score(y_test_binary, y_pred, average='binary')
+        f1 = f1_score(y_test_binary, y_pred, average='binary')
 
         # Cross-validation accuracy for model stability
-        cv_accuracy = cross_val_score(model, x_train, y_train, cv=cv, scoring=self.DEFAULT_SCORING).mean()
+        cv_accuracy = cross_val_score(model, x_test, y_test_binary, cv=cv, scoring=self.DEFAULT_SCORING).mean()
 
         # Display metrics
         print("Accuracy:", accuracy)
@@ -203,8 +213,8 @@ class ModelTrainingEvaluationFunctions:
         print("Recall:", recall)
         print("F1 Score:", f1)
         print("Cross-Validation Accuracy:", cv_accuracy)
-        print("Confusion Matrix:\n", confusion_matrix(y_test, y_pred))
-        print("AUC-ROC:", roc_auc_score(y_test, y_pred))
+        print("Confusion Matrix:\n", confusion_matrix(y_test_binary, y_pred))
+        print("AUC-ROC:", roc_auc_score(y_test_binary, y_pred))
 
         return {
             "accuracy": accuracy,
@@ -220,7 +230,6 @@ class ModelTrainingEvaluationFunctions:
                 'max_depth': [None, 10, 20, 30],
                 'min_samples_split': [2, 5, 10],
                 'min_samples_leaf': [1, 2, 4],
-                # 'n_jobs': [-1],
             }),
             'Gradient Boosting Classifier': (GradientBoostingClassifier(), {
                 'n_estimators': [100, 200, 300],
@@ -256,7 +265,7 @@ class ModelTrainingEvaluationFunctions:
             grid_search.fit(x_train, y_train)
 
             # Evaluate the model
-            evaluation_results = self.evaluate_classification_performance(grid_search.best_estimator_, x_train, y_train, x_test, y_test)
+            evaluation_results = self.evaluate_classification_performance(grid_search.best_estimator_, x_test, y_test)
 
             if evaluation_results['f1_score'] > best_score:
                 best_score = evaluation_results['f1_score']
@@ -321,7 +330,7 @@ print('test_df Shape:', test_df.shape)
 ## EDA
 UtilityFunctions().print_dataframe_stats(train_df)
 UtilityFunctions().print_dataframe_stats(test_df)
- 
+
 ## Visualize Features
 CalculateChurnRate().create_bar_plot(train_df, 'AccountAge', 'Account Age')
 CalculateChurnRate().create_bar_plot(train_df, 'MonthlyCharges', 'Monthly Charges', 2)
@@ -339,7 +348,7 @@ print(categorical_columns)
 CalculateChurnRate().plot_categorical_churn_counts(train_df, categorical_columns)
 
 UtilityFunctions.plot_heatmap(train_df)
- 
+
 ## Calculate Correlation
 correlation_scores = CalculateChurnRate().categorical_correlation(train_df, categorical_columns)
 print(correlation_scores)
@@ -358,7 +367,7 @@ try:
 
 except Exception as ex:
     print(f"An error occurred while processing the numeric columns: {ex}")
- 
+
 ## Encode DataFrames
 df_encoded_train = DataProcessingFunctions().apply_one_hot_encoding(train_df, categorical_columns)
 df_encoded_test = DataProcessingFunctions().apply_one_hot_encoding(test_df, categorical_columns)
@@ -377,10 +386,13 @@ x_test = DataProcessingFunctions().extract_features(df_encoded_test, columns_to_
 
 # Extract target for test/prediction data (assuming it's used for inference or submission)
 y_test = DataProcessingFunctions().extract_features(df_prediction_submission, columns_to_exclude_test)
- 
+
 ## Evaluate Models
 # Find the best model among the comparison models
-best_model, best_params, best_evaluation_results = ModelTrainingEvaluationFunctions().get_best_model_and_params(x_train, y_train, x_test, y_test)
+best_model, best_params, best_evaluation_results = ModelTrainingEvaluationFunctions().get_best_model_and_params(x_train,
+                                                                                                                y_train,
+                                                                                                                x_test,
+                                                                                                                y_test)
 
 # Display information about the best model
 print(f"The best model is: {best_model} with the best performance.")
