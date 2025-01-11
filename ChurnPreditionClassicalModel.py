@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import os
 import scipy.stats as ss
 import seaborn as sns
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
@@ -18,8 +19,9 @@ from sklearn.model_selection import GridSearchCV, cross_val_score
 from sklearn.svm import SVC
 from matplotlib import pyplot as plt
 
+GRAPH_FOLDER = "graphs"
+os.makedirs(GRAPH_FOLDER, exist_ok=True)
 
-# Utility Functions
 class UtilityFunctions:
     @staticmethod
     def print_dataframe_stats(df: pd.DataFrame) -> None:
@@ -34,19 +36,16 @@ class UtilityFunctions:
     @staticmethod
     def plot_heatmap(df):
         """Plot a heatmap to visualize correlations among numeric columns."""
-        # Calculate correlation matrix for numeric columns
         numeric_columns = df.select_dtypes(include=['int', 'float']).columns
         corr_matrix = df[numeric_columns].corr()
 
-        # Plot heatmap
         plt.figure(figsize=(20, 12))
         ax = sns.heatmap(corr_matrix, annot=True, cmap='PiYG', fmt=".2f", annot_kws={"size": 12})
         plt.title('Correlation between Numeric Columns')
 
-        # Rotate x-axis labels to 45 degrees
         ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right')
 
-        plt.show()
+        plt.savefig(os.path.join(GRAPH_FOLDER, "heatmap_correlation.png"))
 
 
 class CalculateChurnRate:
@@ -82,7 +81,8 @@ class CalculateChurnRate:
         plt.ylabel('Average Churn')
         plt.title(f'Average Customer Churn by {xlabel_text}')
         plt.grid(True)
-        plt.show()
+        plot_filename = os.path.join(GRAPH_FOLDER, f"bar_plot_{column_name}.png")
+        plt.savefig(plot_filename)
 
     def get_categorical_columns(self, df, exclude=None):
         """Get a list of categorical columns in a DataFrame, excluding specified ones."""
@@ -93,6 +93,8 @@ class CalculateChurnRate:
 
     def plot_categorical_churn_counts(self, df, categorical_columns, target_column='Churn'):
         """Plot the count of each category in categorical columns with respect to churn."""
+        plt.figure(figsize=(40, 33))
+
         num_cols = len(categorical_columns)
         num_rows = (num_cols + 1) // 2
 
@@ -107,7 +109,7 @@ class CalculateChurnRate:
             fig.delaxes(axes[-1])
 
         plt.tight_layout()
-        plt.show()
+        plt.savefig(os.path.join(GRAPH_FOLDER, "categorical_churn_counts.png"))
 
     def cramers_corrected_stat(self, confusion_matrix):
         """Calculate Cramer's V statistic with correction."""
@@ -147,15 +149,13 @@ class CalculateChurnRate:
         return churn_rates
 
 
-# Data Processing Functions
 class DataProcessingFunctions:
     @staticmethod
     def apply_one_hot_encoding(df, target_column):
         """Apply one-hot encoding to a specified column in a DataFrame."""
-        # Perform one-hot encoding
+
         one_hot_encoded = pd.get_dummies(df[target_column])
 
-        # Concatenate the one-hot encoded columns with the original DataFrame
         df_encoded = pd.concat([df, one_hot_encoded], axis=1)
         df_encoded = df_encoded.drop(columns=target_column)
         df_encoded = df_encoded * 1
@@ -173,9 +173,7 @@ class DataProcessingFunctions:
         return df[target_column]
 
 
-# Model Training and Evaluation Functions
 class ModelTrainingEvaluationFunctions:
-    # Constants
     def __init__(self):
         self.DEFAULT_CV = 5
         self.DEFAULT_SCORING = 'f1'
@@ -185,29 +183,23 @@ class ModelTrainingEvaluationFunctions:
         if cv is None:
             cv = self.DEFAULT_CV
 
-        # Convert y_test_df to Series
         y_test = y_test_df.squeeze()
 
-        # Ensure y_test is binary
         if y_test.dtype != np.bool_ and y_test.dtype != 'int64':
-            threshold = 0.5  # Example threshold, adjust as needed
+            threshold = 0.5
             y_test_binary = (y_test >= threshold).astype(int)
         else:
             y_test_binary = y_test
 
-        # Predict
         y_pred = model.predict(x_test)
 
-        # Basic metrics
         accuracy = accuracy_score(y_test_binary, y_pred)
         precision = precision_score(y_test_binary, y_pred, average='binary', zero_division=1)
         recall = recall_score(y_test_binary, y_pred, average='binary')
         f1 = f1_score(y_test_binary, y_pred, average='binary')
 
-        # Cross-validation accuracy for model stability
         cv_accuracy = cross_val_score(model, x_test, y_test_binary, cv=cv, scoring=self.DEFAULT_SCORING).mean()
 
-        # Display metrics
         print("Accuracy:", accuracy)
         print("Precision:", precision)
         print("Recall:", recall)
@@ -264,7 +256,6 @@ class ModelTrainingEvaluationFunctions:
             grid_search = GridSearchCV(model, param_grid, cv=5, verbose=1, n_jobs=-1)
             grid_search.fit(x_train, y_train)
 
-            # Evaluate the model
             evaluation_results = self.evaluate_classification_performance(grid_search.best_estimator_, x_test, y_test)
 
             if evaluation_results['f1_score'] > best_score:
@@ -277,16 +268,14 @@ class ModelTrainingEvaluationFunctions:
 
     def plot_feature_importance(self, model, feature_names, model_name, figsize=(15, 10), font_scale=1.5, fontsize=10):
         """Plot the feature importance for a given model."""
-        # Check the type of model
+
         if isinstance(model, RandomForestClassifier) or isinstance(model, GradientBoostingClassifier):
-            # For RandomForestClassifier or GradientBoostingClassifier
             feature_importances_df = pd.DataFrame({
                 'Feature': feature_names,
                 'Importance': model.feature_importances_,
             })
         elif isinstance(model, KNeighborsClassifier):
             # For KNeighborsClassifier
-            # Compute permutation importance
             result = permutation_importance(model, x_test, y_test, n_repeats=10, random_state=42)
             feature_importances = result.importances_mean
             feature_importances_df = pd.DataFrame({
@@ -294,27 +283,22 @@ class ModelTrainingEvaluationFunctions:
                 'Importance': feature_importances,
             })
         else:
-            # For other models (assuming they don't have a direct feature importance attribute)
             print("Warning: Feature importance not available for this model.")
             return
 
-        # Increase font size for all elements in the plot
         sns.set(font_scale=font_scale)
 
-        # Plot the feature importance
         plt.figure(figsize=figsize)
         feature_importances_df.sort_values(by='Importance', ascending=False, inplace=True)
         sns.barplot(x='Importance', y='Feature', data=feature_importances_df, legend=False)
 
-        # Set plot titles and labels
         plt.title(f"Feature Importance ({model_name})", fontsize=15)
         plt.xlabel('Importance', fontsize=fontsize)
         plt.ylabel('Feature', fontsize=fontsize)
         plt.xticks(fontsize=fontsize)
         plt.yticks(fontsize=fontsize)
 
-        # Display the plot
-        plt.show()
+        plt.savefig(os.path.join(GRAPH_FOLDER, f"feature_importance_{model_name}.png"))
 
 
 df_prediction_submission = pd.read_csv('Files/prediction_submission.csv')
@@ -346,7 +330,6 @@ categorical_columns = CalculateChurnRate().get_categorical_columns(train_df, exc
 print(categorical_columns)
 
 CalculateChurnRate().plot_categorical_churn_counts(train_df, categorical_columns)
-
 UtilityFunctions.plot_heatmap(train_df)
 
 ## Calculate Correlation
@@ -357,14 +340,12 @@ print(correlation_scores)
 for categorical_column in categorical_columns:
     churn_rates = CalculateChurnRate().calculate_churn_rate(train_df, categorical_column)
     print(churn_rates)
-
 try:
     numeric_columns = train_df.select_dtypes(include=['int', 'float']).columns
 
     for numeric_column in numeric_columns:
         churn_rates_by_bins = CalculateChurnRate().calculate_churn_rate_by_bins(train_df, numeric_column)
         print(churn_rates_by_bins)
-
 except Exception as ex:
     print(f"An error occurred while processing the numeric columns: {ex}")
 
@@ -372,33 +353,22 @@ except Exception as ex:
 df_encoded_train = DataProcessingFunctions().apply_one_hot_encoding(train_df, categorical_columns)
 df_encoded_test = DataProcessingFunctions().apply_one_hot_encoding(test_df, categorical_columns)
 
-## Split Train - Test
 # Define the columns to exclude for feature extraction
 columns_to_exclude_train = ['Churn', 'CustomerID']
 columns_to_exclude_test = ['CustomerID']
 
-# Extract features and target for training data
 x_train = DataProcessingFunctions().extract_features(df_encoded_train, columns_to_exclude_train)
 y_train = DataProcessingFunctions().extract_target(df_encoded_train, 'Churn')
-
-# Extract features for test data
 x_test = DataProcessingFunctions().extract_features(df_encoded_test, columns_to_exclude_test)
-
-# Extract target for test/prediction data (assuming it's used for inference or submission)
 y_test = DataProcessingFunctions().extract_features(df_prediction_submission, columns_to_exclude_test)
 
 ## Evaluate Models
-# Find the best model among the comparison models
 best_model, best_params, best_evaluation_results = ModelTrainingEvaluationFunctions().get_best_model_and_params(x_train,
                                                                                                                 y_train,
                                                                                                                 x_test,
                                                                                                                 y_test)
-
-# Display information about the best model
 print(f"The best model is: {best_model} with the best performance.")
 
-# Fit and predict with the best model
 best_model.fit(x_train, y_train)
 y_test_pred = best_model.predict(x_test)
-
 ModelTrainingEvaluationFunctions().plot_feature_importance(best_model, x_train.columns.tolist(), best_model)
