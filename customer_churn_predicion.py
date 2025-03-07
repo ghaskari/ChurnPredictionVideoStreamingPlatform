@@ -120,7 +120,7 @@ def cleaning_table(df):
 
 
 def split_train_test_model(df,  test_size=0.2, random_state=42):
-    X = df.drop(columns=["Churn", 'MonthlyCharges', 'tenure'])
+    X = df.drop(columns=["Churn", 'TotalCharges', 'tenure'])
     X = X.set_index('customerID')
     y = df["Churn"]
 
@@ -263,12 +263,11 @@ class ChurnModelEvaluator:
         )
         tuner.fit(self.X_train, self.y_train)
         best_model = tuner.best_estimator_
-        self.tuned_models["RidgeClassifierCV"] = best_model
+        self.tuned_models["LogisticRegressionCV"] = best_model
         print("Best RidgeClassifierCV params:", tuner.best_params_)
         return best_model
 
     def evaluate_and_save(self, model, model_name):
-        # Evaluate predictions
         y_pred = model.predict(self.X_test)
         acc = accuracy_score(self.y_test, y_pred) * 100
         print(f"\nModel: {model_name}")
@@ -331,16 +330,16 @@ class ChurnModelEvaluator:
             self.evaluate_and_save(model, name)
 
     def build_voting_classifier(self):
-        required_models = {"GradientBoostingClassifier", "AdaBoostClassifier", "RidgeClassifierCV"}
+        required_models = {"GradientBoostingClassifier", "AdaBoostClassifier", "LogisticRegressionCV"}
         if not required_models.issubset(set(self.tuned_models.keys())):
-            print("Please tune GradientBoosting, AdaBoost, and RidgeClassifierCV models first.")
+            print("Please tune GradientBoosting, AdaBoost, and LogisticRegressionCV models first.")
             return None
 
         voting_clf = VotingClassifier(
             estimators=[
                 ('gb', self.tuned_models["GradientBoostingClassifier"]),
                 ('ada', self.tuned_models["AdaBoostClassifier"]),
-                # ('ridge', self.tuned_models["RidgeClassifierCV"])
+                ('lgcv', self.tuned_models["LogisticRegressionCV"])
             ],
             voting='hard'
         )
@@ -404,8 +403,20 @@ print_dataframe_stats(data_churn)
 df_churn = handle_categorical_values(data_churn)
 df_churn = cleaning_table(df_churn)
 df_churn.to_csv('files/df_churn.csv', index=False)
+df_churn_tuned = df_churn[['customerID',
+                           'MonthlyCharges',
+                           'TotalCharges',
+                           'Churn',
+                           'Contract',
+                           'tenure_bin',
+                           'OnlineSecurity',
+                           'TechSupport',
+                           # 'PhoneService',
+                           # 'InternetService',
+                           'tenure'
+                           ]]
 
-X, y, X_train, X_test, y_train, y_test = split_train_test_model(df_churn)
+X, y, X_train, X_test, y_train, y_test = split_train_test_model(df_churn_tuned)
 model_metrics_all = InitializingModels().get_model_results(X, y)
 
 evaluator = ChurnModelEvaluator(X_train, y_train, X_test, y_test, graphs_dir="graph", results_dir="result")
