@@ -9,7 +9,7 @@ from sklearn.preprocessing import MinMaxScaler
 
 
 class ChurnAnalysis:
-    def __init__(self, data_path, target_column='Churn', graphs_dir="graphs_eda", results_dir="results"):
+    def __init__(self, data_path, target_column='Churn', graphs_dir="graphs_eda", results_dir="results_eda"):
         self.data_path = data_path
         self.target_column = target_column
         self.df =data_path
