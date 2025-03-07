@@ -6,3 +6,4 @@ seaborn
 IPython
 jupyter
 tensorflow
+xgboost==2.1.4
