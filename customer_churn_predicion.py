@@ -396,6 +396,27 @@ class ChurnModelEvaluator:
 
         return voting_clf
 
+    def get_final_dataset_with_predictions(self, model, output_filename="final_dataset_with_predictions.csv"):
+        """
+        Applies the given model to the test set and returns the final dataset with actual and predicted churn labels.
+        Saves the final dataset as a CSV file in the results directory.
+        """
+        # Predict on the test set
+        y_pred = model.predict(self.X_test)
+
+        final_df = self.X_test.copy()
+
+        final_df['ActualChurn'] = self.y_test
+        final_df['PredictedChurn'] = y_pred
+
+        final_df.reset_index(inplace=True)
+
+        output_path = os.path.join(self.results_dir, output_filename)
+        final_df.to_csv(output_path, index=False)
+        print(f"Final dataset with predictions saved to: {output_path}")
+
+        return final_df
+
 
 data_churn = pd.read_csv('files/dataset.csv')
 print_dataframe_stats(data_churn)
@@ -428,3 +449,5 @@ rc_model = evaluator.tune_ridge()
 evaluator.evaluate_all()
 
 voting_model = evaluator.build_voting_classifier()
+
+final_dataset = evaluator.get_final_dataset_with_predictions(voting_model)
