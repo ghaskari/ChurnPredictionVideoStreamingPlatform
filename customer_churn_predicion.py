@@ -2,18 +2,17 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+import os
 from sklearn.preprocessing import LabelEncoder
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, ConfusionMatrixDisplay
-from sklearn.model_selection import train_test_split
-from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 from sklearn import model_selection
 from sklearn.linear_model import LogisticRegressionCV, RidgeClassifierCV, SGDClassifier
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.ensemble import AdaBoostClassifier, BaggingClassifier, GradientBoostingClassifier, RandomForestClassifier
+from sklearn.model_selection import train_test_split, GridSearchCV, RandomizedSearchCV, StratifiedKFold
+from sklearn.ensemble import AdaBoostClassifier, BaggingClassifier, GradientBoostingClassifier, RandomForestClassifier, VotingClassifier
 from xgboost import XGBClassifier
-
 
 def print_dataframe_stats(df):
     print(f"Rows   : {df.shape[0]}")
@@ -66,6 +65,15 @@ def handle_categorical_values(df):
 
     le = LabelEncoder()
 
+    object_cols = df.select_dtypes(include=['object']).columns.tolist()
+    for col in object_cols:
+        df[col] = df[col].astype(str).str.strip().str.lower()
+
+    for col in object_cols:
+        unique_vals = set(df[col].unique())
+        if unique_vals.issubset({'yes', 'no'}):
+            df[col] = df[col].map({'yes': 1, 'no': 0})
+
     list_drop = ['customerID', 'MonthlyCharges', 'TotalCharges', 'Churn']
     df_keep = df[list_drop]
     df_test = df.drop(columns=list_drop)
@@ -75,8 +83,10 @@ def handle_categorical_values(df):
 
     for col in categorical_columns:
         if df_test[col].dtype == 'object':
-            encoded_cols = pd.get_dummies(df_test[col], prefix=col)
-            df_test = pd.concat([df_test.drop(col, axis=1), encoded_cols], axis=1)
+            # encoded_cols = pd.get_dummies(df_test[col], prefix=col)
+            # df_test = pd.concat([df_test.drop(col, axis=1), encoded_cols], axis=1)
+
+            df_test[col] = le.fit_transform(df_test[col])
 
     df = pd.concat([df_keep, df_test], axis=1)
     df['Churn'] = le.fit_transform(df['Churn'])
@@ -99,7 +109,9 @@ def cleaning_table(df):
         filtered_df =df.apply(lambda row: any(' ' in str(cell) for cell in row), axis=1)
         df = df[~filtered_df]
 
-    df['TotalCharges'] = df['TotalCharges'].astype(float)
+    df['TotalCharges'] = pd.to_numeric(df['TotalCharges'], errors='coerce')
+    median_total = df['TotalCharges'].median()
+    df['TotalCharges'] = df['TotalCharges'].fillna(median_total)
 
     numeric_columns = ['MonthlyCharges', 'TotalCharges']
     df[numeric_columns] = scaler.fit_transform(df[numeric_columns])
@@ -152,7 +164,6 @@ class InitializingModels:
         self.test_f1 = []
 
 
-
     def get_model_results(self, X_variable, y_variable):
         for model in self.models:
             cv_results = model_selection.cross_validate(model, X_variable, y_variable, cv=5,
@@ -173,6 +184,220 @@ class InitializingModels:
         return model_metrics
 
 
+class ChurnModelEvaluator:
+    def __init__(self, X_train, y_train, X_test, y_test, graphs_dir="graph", results_dir="result"):
+        self.X_train = X_train
+        self.y_train = y_train
+        self.X_test = X_test
+        self.y_test = y_test
+        self.graphs_dir = graphs_dir
+        self.results_dir = results_dir
+        os.makedirs(self.graphs_dir, exist_ok=True)
+        os.makedirs(self.results_dir, exist_ok=True)
+        self.tuned_models = {}
+
+    def tune_gradient_boosting(self, use_randomized=False):
+        if use_randomized:
+            param_dist = {
+                'n_estimators': [50, 100, 200],
+                'learning_rate': [0.01, 0.05, 0.1, 0.2],
+                'max_depth': [3, 4, 5, 6],
+                'subsample': [0.6, 0.8, 1.0]
+            }
+            tuner = RandomizedSearchCV(
+                GradientBoostingClassifier(random_state=42),
+                param_distributions=param_dist,
+                n_iter=20,
+                cv=StratifiedKFold(n_splits=5, shuffle=True, random_state=42),
+                scoring='accuracy',
+                random_state=42,
+                n_jobs=-1
+            )
+        else:
+            param_grid = {
+                'n_estimators': [50, 100],
+                'learning_rate': [0.05, 0.1],
+                'max_depth': [3, 5]
+            }
+            tuner = GridSearchCV(
+                GradientBoostingClassifier(random_state=42),
+                param_grid=param_grid,
+                cv=5,
+                scoring='accuracy',
+                n_jobs=-1
+            )
+        tuner.fit(self.X_train, self.y_train)
+        best_model = tuner.best_estimator_
+        self.tuned_models["GradientBoostingClassifier"] = best_model
+        print("Best GradientBoostingClassifier params:", tuner.best_params_)
+        return best_model
+
+    def tune_adaboost(self):
+        param_grid = {
+            'n_estimators': [50, 100, 150],
+            'learning_rate': [0.01, 0.05, 0.1, 0.5, 1.0]
+        }
+        tuner = GridSearchCV(
+            AdaBoostClassifier(random_state=42),
+            param_grid=param_grid,
+            cv=5,
+            scoring='accuracy',
+            n_jobs=-1
+        )
+        tuner.fit(self.X_train, self.y_train)
+        best_model = tuner.best_estimator_
+        self.tuned_models["AdaBoostClassifier"] = best_model
+        print("Best AdaBoostClassifier params:", tuner.best_params_)
+        return best_model
+
+    def tune_ridge(self):
+        param_grid = {
+            'alphas': [[0.1, 1.0, 10.0, 20.0]]
+        }
+        tuner = GridSearchCV(
+            RidgeClassifierCV(),
+            param_grid=param_grid,
+            cv=5,
+            scoring='accuracy',
+            n_jobs=-1
+        )
+        tuner.fit(self.X_train, self.y_train)
+        best_model = tuner.best_estimator_
+        self.tuned_models["RidgeClassifierCV"] = best_model
+        print("Best RidgeClassifierCV params:", tuner.best_params_)
+        return best_model
+
+    def evaluate_and_save(self, model, model_name):
+        # Evaluate predictions
+        y_pred = model.predict(self.X_test)
+        acc = accuracy_score(self.y_test, y_pred) * 100
+        print(f"\nModel: {model_name}")
+        print("Accuracy: {:.2f}%".format(acc))
+        print("Classification Report:\n", classification_report(self.y_test, y_pred))
+
+        # Save confusion matrix
+        cm = confusion_matrix(self.y_test, y_pred)
+        disp = ConfusionMatrixDisplay(confusion_matrix=cm)
+        disp.plot()
+        plt.title(f"Confusion Matrix: {model_name}")
+        cm_path = os.path.join(self.graphs_dir, f"{model_name}_confusion_matrix.png")
+        plt.savefig(cm_path)
+        plt.close()
+
+        # Save feature importance or coefficients if available
+        if hasattr(model, "feature_importances_"):
+            importances = model.feature_importances_
+            feature_names = self.X_train.columns
+            feat_imp_df = pd.DataFrame({
+                'Feature': feature_names,
+                'Importance': importances
+            }).sort_values(by='Importance', ascending=False)
+            print("\nFeature Importances for", model_name)
+            print(feat_imp_df)
+            csv_path = os.path.join(self.results_dir, f"{model_name}_feature_importances.csv")
+            feat_imp_df.to_csv(csv_path, index=False)
+            plt.figure(figsize=(10, 6))
+            sns.barplot(data=feat_imp_df, x='Importance', y='Feature')
+            plt.title(f"Feature Importances: {model_name}")
+            plt.tight_layout()
+            feat_imp_path = os.path.join(self.graphs_dir, f"{model_name}_feature_importances.png")
+            plt.savefig(feat_imp_path)
+            plt.close()
+        elif hasattr(model, "coef_"):
+            coefs = model.coef_.ravel()
+            importances = np.abs(coefs)
+            feature_names = self.X_train.columns
+            feat_imp_df = pd.DataFrame({
+                'Feature': feature_names,
+                'Coefficient': coefs,
+                'Importance': importances
+            }).sort_values(by='Importance', ascending=False)
+            print("\nCoefficients for", model_name)
+            print(feat_imp_df)
+            csv_path = os.path.join(self.results_dir, f"{model_name}_coefficients.csv")
+            feat_imp_df.to_csv(csv_path, index=False)
+            plt.figure(figsize=(10, 6))
+            sns.barplot(data=feat_imp_df, x='Importance', y='Feature')
+            plt.title(f"Feature Coefficients (Importance): {model_name}")
+            plt.tight_layout()
+            feat_imp_path = os.path.join(self.graphs_dir, f"{model_name}_coefficients.png")
+            plt.savefig(feat_imp_path)
+            plt.close()
+        else:
+            print(f"No feature importance or coefficients available for {model_name}.")
+
+    def evaluate_all(self):
+        for name, model in self.tuned_models.items():
+            self.evaluate_and_save(model, name)
+
+    def build_voting_classifier(self):
+        required_models = {"GradientBoostingClassifier", "AdaBoostClassifier", "RidgeClassifierCV"}
+        if not required_models.issubset(set(self.tuned_models.keys())):
+            print("Please tune GradientBoosting, AdaBoost, and RidgeClassifierCV models first.")
+            return None
+
+        voting_clf = VotingClassifier(
+            estimators=[
+                ('gb', self.tuned_models["GradientBoostingClassifier"]),
+                ('ada', self.tuned_models["AdaBoostClassifier"]),
+                # ('ridge', self.tuned_models["RidgeClassifierCV"])
+            ],
+            voting='hard'
+        )
+        voting_clf.fit(self.X_train, self.y_train)
+
+        y_pred = voting_clf.predict(self.X_test)
+        acc = accuracy_score(self.y_test, y_pred) * 100
+        print("Voting Classifier Accuracy: {:.2f}%".format(acc))
+        print("Classification Report (Voting):\n", classification_report(self.y_test, y_pred))
+
+        cm = confusion_matrix(self.y_test, y_pred)
+        disp = ConfusionMatrixDisplay(confusion_matrix=cm)
+        disp.plot()
+        plt.title("Confusion Matrix: VotingClassifier")
+        voting_cm_path = os.path.join(self.graphs_dir, "VotingClassifier_confusion_matrix.png")
+        plt.savefig(voting_cm_path)
+        plt.close()
+
+        importances_list = []
+        model_names = []
+        for name in required_models:
+            model = self.tuned_models[name]
+            if hasattr(model, "feature_importances_"):
+                imp = model.feature_importances_
+                importances_list.append(imp)
+                model_names.append(name)
+            elif hasattr(model, "coef_"):
+                imp = np.abs(model.coef_).ravel()
+                importances_list.append(imp)
+                model_names.append(name)
+
+        if importances_list:
+            avg_importance = np.mean(np.array(importances_list), axis=0)
+            feature_names = self.X_train.columns
+            feat_imp_df = pd.DataFrame({
+                'Feature': feature_names,
+                'AvgImportance': avg_importance
+            }).sort_values(by='AvgImportance', ascending=False)
+            print("\nAggregated Feature Importances (VotingClassifier):")
+            print(feat_imp_df)
+
+            csv_path = os.path.join("result", "VotingClassifier_feature_importances.csv")
+            feat_imp_df.to_csv(csv_path, index=False)
+
+            plt.figure(figsize=(10, 6))
+            sns.barplot(data=feat_imp_df, x='AvgImportance', y='Feature')
+            plt.title("Aggregated Feature Importances (VotingClassifier)")
+            plt.tight_layout()
+            feat_imp_path = os.path.join(self.graphs_dir, "VotingClassifier_feature_importances.png")
+            plt.savefig(feat_imp_path)
+            plt.close()
+        else:
+            print("No feature importance or coefficients available for the constituent models.")
+
+        return voting_clf
+
+
 data_churn = pd.read_csv('files/dataset.csv')
 print_dataframe_stats(data_churn)
 
@@ -182,3 +407,13 @@ df_churn.to_csv('files/df_churn.csv', index=False)
 
 X, y, X_train, X_test, y_train, y_test = split_train_test_model(df_churn)
 model_metrics_all = InitializingModels().get_model_results(X, y)
+
+evaluator = ChurnModelEvaluator(X_train, y_train, X_test, y_test, graphs_dir="graph", results_dir="result")
+
+gb_model = evaluator.tune_gradient_boosting(use_randomized=False)
+ab_model = evaluator.tune_adaboost()
+rc_model = evaluator.tune_ridge()
+
+evaluator.evaluate_all()
+
+voting_model = evaluator.build_voting_classifier()
