@@ -122,7 +122,9 @@ def cleaning_table(df):
 def split_train_test_model(df,  test_size=0.2, random_state=42):
     X = df.drop(columns=["Churn", 'TotalCharges', 'tenure'])
     X = X.set_index('customerID')
-    y = df["Churn"]
+
+    y = df[['Churn', 'customerID']]
+    y = y.set_index('customerID')
 
     X_train, X_test, y_train, y_test = train_test_split(X,
                                                         y,
@@ -397,19 +399,23 @@ class ChurnModelEvaluator:
         return voting_clf
 
     def get_final_dataset_with_predictions(self, model, output_filename="final_dataset_with_predictions.csv"):
-        """
-        Applies the given model to the test set and returns the final dataset with actual and predicted churn labels.
-        Saves the final dataset as a CSV file in the results directory.
-        """
-        # Predict on the test set
         y_pred = model.predict(self.X_test)
 
-        final_df = self.X_test.copy()
+        if "customerID" not in self.X_test.columns:
+            self.X_test = self.X_test.reset_index()
 
-        final_df['ActualChurn'] = self.y_test
-        final_df['PredictedChurn'] = y_pred
+        if isinstance(self.y_test, np.ndarray):
+            self.y_test = pd.Series(self.y_test, index=self.X_test.index, name="ActualChurn")
 
-        final_df.reset_index(inplace=True)
+        actual_df = self.y_test.reset_index()
+
+        if "customerID" in self.X_test.columns and "customerID" in actual_df.columns:
+            final_df = self.X_test.merge(actual_df, on="customerID", how="left")
+        else:
+            final_df = self.X_test.copy()
+            final_df["ActualChurn"] = self.y_test.values
+
+        final_df["PredictedChurn"] = y_pred
 
         output_path = os.path.join(self.results_dir, output_filename)
         final_df.to_csv(output_path, index=False)
