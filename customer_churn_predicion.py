@@ -429,7 +429,7 @@ print_dataframe_stats(data_churn)
 
 df_churn = handle_categorical_values(data_churn)
 df_churn = cleaning_table(df_churn)
-df_churn.to_csv('files/df_churn.csv', index=False)
+df_churn.to_csv('result/df_churn.csv', index=False)
 df_churn_tuned = df_churn[['customerID',
                            'MonthlyCharges',
                            'TotalCharges',

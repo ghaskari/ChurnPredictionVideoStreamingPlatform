@@ -73,6 +73,73 @@ class ChurnAnalysis:
             categorical_columns = [col for col in categorical_columns if col not in exclude]
         return categorical_columns
 
+    def plot_pair_plots(self):
+        """
+        Plot and save pair plots for numeric columns with the target column as hue.
+        """
+        numeric_columns = self.df.select_dtypes(include=['int', 'float']).columns.tolist()
+
+        pair_plot = sns.pairplot(self.df[numeric_columns], hue=self.target_column, diag_kind='hist')
+        plot_path = os.path.join(self.graphs_dir, "pair_plots.png")
+        pair_plot.fig.savefig(plot_path)
+        plt.close(pair_plot.fig)
+        print(f"Saved: {plot_path}")
+
+    def plot_pair_plots_separate(self):
+        """
+        Plot and save separate scatter plots for each pair of numeric columns with the target column as hue.
+        """
+        numeric_columns = self.df.select_dtypes(include=['int', 'float']).columns.tolist()
+
+        # Optionally, exclude the target column itself from the numeric columns
+        numeric_columns = [col for col in numeric_columns if col != self.target_column]
+
+        # Create a scatter plot for each pair of numeric columns
+        for i in range(len(numeric_columns)):
+            for j in range(i + 1, len(numeric_columns)):
+                col_x = numeric_columns[i]
+                col_y = numeric_columns[j]
+
+                plt.figure(figsize=(6, 4))
+                sns.scatterplot(data=self.df, x=col_x, y=col_y, hue=self.target_column, palette='Set1')
+                plt.title(f'{col_x} vs. {col_y}')
+                plt.legend(title=self.target_column, loc='best')
+                plt.grid(True)
+
+                # Save each figure with a unique filename
+                plot_filename = f"pairplot_{col_x}_vs_{col_y}.png"
+                plot_path = os.path.join(self.graphs_dir, plot_filename)
+                plt.savefig(plot_path, bbox_inches='tight')
+                plt.close()
+                print(f"Saved: {plot_path}")
+
+    def plot_hist_plots_separate(self):
+        """
+        Plot and save separate 2D histogram plots for each pair of numeric columns.
+        Each plot counts the number of observations in each bin, effectively showing item counts.
+        """
+        numeric_columns = self.df.select_dtypes(include=['int', 'float']).columns.tolist()
+        numeric_columns = [col for col in numeric_columns if col != self.target_column]
+
+        for i in range(len(numeric_columns)):
+            for j in range(i + 1, len(numeric_columns)):
+                col_x = numeric_columns[i]
+                col_y = numeric_columns[j]
+
+                plt.figure(figsize=(6, 4))
+                sns.histplot(data=self.df, x=col_x, y=col_y, bins=30, cbar=True)
+                plt.title(f'{col_x} vs. {col_y} (Item Count)')
+                plt.xlabel(col_x)
+                plt.ylabel(col_y)
+                plt.grid(True)
+
+                # Save each figure with a unique filename
+                plot_filename = f"histplot_{col_x}_vs_{col_y}_count.png"
+                plot_path = os.path.join(self.graphs_dir, plot_filename)
+                plt.savefig(plot_path, bbox_inches='tight')
+                plt.close()
+                print(f"Saved: {plot_path}")
+
     def plot_categorical_churn_counts(self):
         """
         Plot and save count plots for each categorical column with hue to show the values within each column.
@@ -100,6 +167,63 @@ class ChurnAnalysis:
         plt.savefig(plot_path)
         plt.close()
         print(f"Saved: {plot_path}")
+
+    def plot_all_churn_counts(self, bins=5):
+        """
+        For every column (except the target), plot and save a chart comparing the count of churn (0 vs 1).
+        For categorical columns (or those with few unique values), group by the column directly.
+        For numeric columns with many unique values, bin them first.
+        """
+        for col in self.df.columns:
+            if col == self.target_column:
+                continue
+
+            plt.figure(figsize=(8, 5))
+
+            # For categorical (or near-categorical) variables:
+            if self.df[col].dtype == 'object' or self.df[col].nunique() <= 10:
+                # Create a pivot table: rows=group values, columns=churn values (0/1)
+                churn_counts = self.df.groupby(col)[self.target_column].value_counts().unstack().fillna(0)
+                churn_counts.plot(kind='bar', stacked=False, color=['skyblue', 'salmon'])
+                plt.xlabel(col)
+                plt.ylabel("Count")
+                plt.title(f"Churn Count by {col}")
+            else:
+                # For numeric variables: first, bin the column into a fixed number of groups.
+                df_temp = self.df[[col, self.target_column]].copy()
+                df_temp["bin"] = pd.cut(df_temp[col], bins=bins)
+                churn_counts = df_temp.groupby("bin")[self.target_column].value_counts().unstack().fillna(0)
+                churn_counts.plot(kind='bar', stacked=False, color=['skyblue', 'salmon'])
+                plt.xlabel(f"{col} (binned)")
+                plt.ylabel("Count")
+                plt.title(f"Churn Count by binned {col}")
+
+            plt.grid(True)
+            plot_path = os.path.join(self.graphs_dir, f"churn_counts_by_{col}.png")
+            plt.savefig(plot_path, bbox_inches='tight')
+            plt.close()
+            print(f"Saved: {plot_path}")
+
+    def plot_all_boxplots(self):
+        """
+        For every numeric variable (except the target), plot and save a box plot of that variable's distribution across churn groups.
+        """
+        # Get numeric columns and exclude the target column.
+        numeric_cols = [col for col in self.df.select_dtypes(include=['int', 'float']).columns
+                        if col != self.target_column]
+
+        for col in numeric_cols:
+            plt.figure(figsize=(8, 5))
+            sns.boxplot(x=self.target_column, y=col, data=self.df, palette="Set2")
+            plt.xlabel(self.target_column)
+            plt.ylabel(col)
+            plt.title(f"{col} Distribution by {self.target_column}")
+            plt.grid(True)
+
+            plot_path = os.path.join(self.graphs_dir, f"boxplot_{col}_by_{self.target_column}.png")
+            plt.savefig(plot_path, bbox_inches='tight')
+            plt.close()
+            print(f"Saved: {plot_path}")
 
     def plot_heatmap(self):
         """
@@ -166,7 +290,11 @@ class ChurnAnalysis:
         self.plot_heatmap()
         self.categorical_correlation()
         self.calculate_churn_rate()
-
+        self.plot_pair_plots()
+        self.plot_pair_plots_separate()
+        self.plot_hist_plots_separate()
+        self.plot_all_boxplots()
+        self.plot_all_churn_counts()
 
 def handle_categorical_values(df):
 

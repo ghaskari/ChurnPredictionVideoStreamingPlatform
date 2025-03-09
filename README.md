@@ -1,7 +1,8 @@
 # Churn Prediction Video Streaming Platform
 
 This project predicts customer churn for a video streaming platform. Churn prediction is a crucial task for subscription-based businesses, allowing them to identify customers who are likely to cancel their subscriptions. This project uses a dataset of customer subscriptions from 2021 to build and evaluate churn prediction models.
-
+source:
+'https://huggingface.co/datasets/scikit-learn/churn-prediction'
 ---
 
 ## Table of Contents
